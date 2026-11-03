@@ -1,0 +1,5 @@
+CREATE DATABASE wincommerce_dw;
+
+CREATE SCHEMA staging;
+CREATE SCHEMA dw;
+CREATE SCHEMA etl_log;
