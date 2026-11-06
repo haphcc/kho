@@ -2,15 +2,7 @@
 """
 =============================================================================
 CÂU 10: QUY TRÌNH ETL NẠP DỮ LIỆU VÀO 9 BẢNG DIMENSION (DATA WAREHOUSE WINCOMMERCE)
-Đáp ứng thiết kế Câu 7, Câu 10 (kho khò.docx) và hướng dẫn README_FACT_DIM_DWH.md
-=============================================================================
-Kiến trúc luồng xử lý:
-1. Nguồn 1: SQL Server [multichannel_sales] (Bán lẻ đa kênh)
-2. Nguồn 2: PostgreSQL [logistics_purchasing] (Chuỗi cung ứng & Kho vận)
-3. Đích    : PostgreSQL [wincommerce_dw] (Data Warehouse)
-   - Schema: staging  (Lưu trữ dữ liệu trung gian trích xuất từ 2 nguồn)
-   - Schema: dw       (9 bảng Dimension chuẩn Kimball có Surrogate Key)
-   - Schema: etl_log  (Nhật ký theo dõi quá trình chạy ETL)
+Sử dụng hoàn toàn Python (Pandas & SQLAlchemy) theo chuẩn kiến trúc Kimball
 =============================================================================
 """
 
@@ -18,7 +10,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import sys
 import io
 import urllib.parse
@@ -29,7 +20,6 @@ import sqlalchemy as sa
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
-# Cấu hình UTF-8 tránh lỗi font console Windows
 if sys.stdout.encoding != 'utf-8':
     try:
         sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
@@ -37,9 +27,6 @@ if sys.stdout.encoding != 'utf-8':
         pass
 
 
-# =============================================================================
-# 1. CẤU HÌNH KẾT NỐI HỆ THỐNG
-# =============================================================================
 DW_DATABASE = os.getenv("DW_DATABASE", "wincommerce_dw")
 DW_ADMIN_DATABASE = os.getenv("DW_ADMIN_DATABASE", "postgres")
 SOURCE_PG_DATABASE = os.getenv("SOURCE_PG_DATABASE", "logistics_purchasing")
@@ -58,11 +45,9 @@ STAGING_SCHEMA = "staging"
 ETL_LOG_SCHEMA = "etl_log"
 
 FIXED_VIETNAM_HOLIDAYS = {(1, 1), (4, 30), (5, 1), (9, 2)}
-NEAR_EXPIRY_DAYS = 30
 
 
 def get_sql_server_engine(db_name: str = SQL_SERVER_DATABASE) -> Engine:
-    """Tạo engine kết nối SQL Server (multichannel_sales)."""
     drivers_to_try = [ODBC_DRIVER, "ODBC Driver 18 for SQL Server", "SQL Server"]
     instances_to_try = [SQL_SERVER_INSTANCE, r".\SQLEXPRESS", "."]
     
@@ -88,15 +73,11 @@ def get_sql_server_engine(db_name: str = SQL_SERVER_DATABASE) -> Engine:
 
 
 def get_postgres_engine(db_name: str = SOURCE_PG_DATABASE) -> Engine:
-    """Tạo engine kết nối PostgreSQL (logistics_purchasing hoặc wincommerce_dw)."""
     pwd_quoted = urllib.parse.quote_plus(PG_PASSWORD)
     url = f"postgresql+psycopg2://{PG_USER}:{pwd_quoted}@{PG_HOST}:{PG_PORT}/{db_name}"
     return sa.create_engine(url)
 
 
-# =============================================================================
-# 2. DDL KHỞI TẠO BẢNG VÀ SCHEMA TRONG WINCOMMERCE_DW
-# =============================================================================
 DIMENSION_DDL = (
     """
     CREATE TABLE IF NOT EXISTS dw.dim_date (
@@ -210,7 +191,6 @@ DIMENSION_DDL = (
 
 
 def ensure_dw_database() -> None:
-    """Đảm bảo database wincommerce_dw tồn tại trên PostgreSQL."""
     admin_engine = get_postgres_engine(DW_ADMIN_DATABASE)
     try:
         with admin_engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
@@ -226,12 +206,10 @@ def ensure_dw_database() -> None:
 
 
 def create_dw_schemas_and_tables(dw_engine: Engine) -> None:
-    """Tạo các schema staging, dw, etl_log và các bảng DIM."""
     with dw_engine.begin() as conn:
         for s in [STAGING_SCHEMA, DW_SCHEMA, ETL_LOG_SCHEMA]:
             conn.exec_driver_sql(f'CREATE SCHEMA IF NOT EXISTS "{s}"')
         
-        # Tạo bảng nhật ký ETL
         conn.exec_driver_sql(
             """
             CREATE TABLE IF NOT EXISTS etl_log.etl_run_log (
@@ -246,26 +224,17 @@ def create_dw_schemas_and_tables(dw_engine: Engine) -> None:
             """
         )
 
-        # Tạo 9 bảng DIM
         for ddl in DIMENSION_DDL:
             conn.exec_driver_sql(ddl)
 
 
-# =============================================================================
-# 3. BƯỚC 1 & 2: TRÍCH XUẤT (EXTRACT) VÀ NẠP STAGING
-# =============================================================================
 def extract_and_load_staging(sql_eng: Engine, pg_src_eng: Engine, dw_eng: Engine) -> dict[str, int]:
-    """
-    Trích xuất dữ liệu từ SQL Server và PostgreSQL nguồn,
-    lưu trực tiếp vào các bảng staging tương ứng thuộc schema staging trong wincommerce_dw.
-    """
     print("\n" + "=" * 78)
     print(">>> BƯỚC 1 & 2: EXTRACT NGUỒN VÀ NẠP VÀO SCHEMA [STAGING] TRONG WINCOMMERCE_DW")
     print("=" * 78)
     
     stg_counts = {}
 
-    # 1. Trích xuất từ SQL Server (multichannel_sales)
     sql_queries = {
         "stg_stores": "SELECT store_id, region_id, store_code, store_name, store_type, address, district, province, open_date, close_date, floor_area, status FROM stores",
         "stg_regions": "SELECT region_id, region_code, region_name, status FROM regions",
@@ -280,12 +249,10 @@ def extract_and_load_staging(sql_eng: Engine, pg_src_eng: Engine, dw_eng: Engine
     with sql_eng.connect() as conn:
         for tbl_name, qry in sql_queries.items():
             df = pd.read_sql(qry, conn)
-            # Nạp vào schema staging của wincommerce_dw
             df.to_sql(tbl_name, dw_eng, schema=STAGING_SCHEMA, if_exists="replace", index=False)
             stg_counts[tbl_name] = len(df)
             print(f"   -> [SQL Server] -> staging.{tbl_name:<22}: {len(df):>5} dòng")
 
-    # 2. Trích xuất từ PostgreSQL (logistics_purchasing)
     pg_queries = {
         "stg_warehouses": "SELECT warehouse_id, warehouse_code, warehouse_name, address, province, region, status FROM warehouses",
         "stg_suppliers": "SELECT supplier_id, supplier_code, supplier_name, phone, email, address, province, status FROM suppliers",
@@ -305,53 +272,38 @@ def extract_and_load_staging(sql_eng: Engine, pg_src_eng: Engine, dw_eng: Engine
     return stg_counts
 
 
-# =============================================================================
-# 4. BƯỚC 3 & 4: CHUYỂN ĐỔI (TRANSFORM) VÀ NẠP VÀO 9 BẢNG DIM (LOAD)
-# =============================================================================
-def transform_and_load_dim_date(dw_eng: Engine, start_year: int = 2025, end_year: int = 2030) -> int:
-    """Tạo bảng dw.dim_date dựa trên lịch thời gian chuẩn bao quát toàn bộ dữ liệu nghiệp vụ."""
+def load_dim_date(dw_eng: Engine) -> int:
     records = []
-    curr = date(start_year, 1, 1)
-    end = date(end_year, 12, 31)
+    curr = date(2025, 1, 1)
+    end = date(2030, 12, 31)
 
     while curr <= end:
-        dt_id = curr.strftime("%y/%m/%d")  # YY/MM/DD theo tài liệu thiết kế Câu 7.2.3
-        d_of_w = curr.isoweekday()         # 1: Thứ 2, ..., 7: Chủ nhật
-        is_wkend = d_of_w in (6, 7)
-        is_hol = (curr.month, curr.day) in FIXED_VIETNAM_HOLIDAYS
-        
-        quarter = (curr.month - 1) // 3 + 1
-        week_num = curr.isocalendar()[1]
-
         records.append({
-            "date_dim_id": dt_id,
+            "date_dim_id": curr.strftime("%y/%m/%d"),
             "full_date": curr,
             "day": curr.day,
-            "day_of_week": d_of_w,
-            "week": week_num,
+            "day_of_week": curr.isoweekday(),
+            "week": curr.isocalendar()[1],
             "month": curr.month,
-            "quarter": quarter,
+            "quarter": (curr.month - 1) // 3 + 1,
             "year": curr.year,
-            "is_weekend": is_wkend,
-            "is_holiday": is_hol,
+            "is_weekend": curr.isoweekday() in (6, 7),
+            "is_holiday": (curr.month, curr.day) in FIXED_VIETNAM_HOLIDAYS,
         })
         curr += timedelta(days=1)
 
     df_date = pd.DataFrame(records)
     with dw_eng.begin() as conn:
-        conn.execute(text("TRUNCATE TABLE dw.dim_date"))
-        df_date.to_sql("dim_date", conn, schema=DW_SCHEMA, if_exists="append", index=False)
+        conn.execute(text("TRUNCATE TABLE dw.dim_date CASCADE"))
+    df_date.to_sql("dim_date", dw_eng, schema=DW_SCHEMA, if_exists="append", index=False)
     return len(df_date)
 
 
-def transform_and_load_dim_time(dw_eng: Engine) -> int:
-    """Tạo bảng dw.dim_time cho toàn bộ 1,440 phút trong 24 giờ."""
+def load_dim_time(dw_eng: Engine) -> int:
     records = []
     for h in range(24):
         for m in range(60):
             lbl = f"{h:02d}:{m:02d}"
-            
-            # Khung giờ theo nghiệp vụ bán lẻ
             if 5 <= h < 12:
                 period = "Morning"
             elif 12 <= h < 17:
@@ -360,237 +312,203 @@ def transform_and_load_dim_time(dw_eng: Engine) -> int:
                 period = "Evening"
             else:
                 period = "Night"
-            
-            # Giờ cao điểm (Peak Hours: 7-9h sáng & 17-19h tối)
-            is_peak = (7 <= h <= 9) or (17 <= h <= 19)
-
+                
             records.append({
                 "time_dim_id": lbl,
                 "hour": h,
                 "minute": m,
                 "time_label": lbl,
                 "time_period": period,
-                "is_peak_hour": is_peak,
+                "is_peak_hour": (7 <= h <= 9) or (17 <= h <= 19),
             })
 
     df_time = pd.DataFrame(records)
     with dw_eng.begin() as conn:
-        conn.execute(text("TRUNCATE TABLE dw.dim_time"))
-        df_time.to_sql("dim_time", conn, schema=DW_SCHEMA, if_exists="append", index=False)
+        conn.execute(text("TRUNCATE TABLE dw.dim_time CASCADE"))
+    df_time.to_sql("dim_time", dw_eng, schema=DW_SCHEMA, if_exists="append", index=False)
     return len(df_time)
 
 
+def load_dim_store(dw_eng: Engine) -> int:
+    df_stores = pd.read_sql("SELECT store_id, store_name, store_type, region_id, province, district, status FROM staging.stg_stores", dw_eng)
+    df_regions = pd.read_sql("SELECT region_id, region_name FROM staging.stg_regions", dw_eng)
+
+    df_dim_store = df_stores.merge(df_regions, on="region_id", how="left")
+    df_dim_store["region_name"] = df_dim_store["region_name"].fillna("Unknown")
+    df_dim_store = df_dim_store.dropna(subset=["store_id"]).drop_duplicates(subset=["store_id"])
+
+    cols = ["store_id", "store_name", "store_type", "region_id", "region_name", "province", "district", "status"]
+    df_dim_store = df_dim_store[cols]
+
+    with dw_eng.begin() as conn:
+        conn.execute(text("TRUNCATE TABLE dw.dim_store RESTART IDENTITY CASCADE"))
+    df_dim_store.to_sql("dim_store", dw_eng, schema=DW_SCHEMA, if_exists="append", index=False)
+    return len(df_dim_store)
+
+
+def load_dim_warehouse(dw_eng: Engine) -> int:
+    df_wh = pd.read_sql("SELECT warehouse_id, warehouse_name, region, address, province, status FROM staging.stg_warehouses", dw_eng)
+
+    df_dim_wh = df_wh.dropna(subset=["warehouse_id"]).drop_duplicates(subset=["warehouse_id"]).copy()
+    df_dim_wh["warehouse_type"] = df_dim_wh["region"].fillna("Kho tổng")
+
+    cols = ["warehouse_id", "warehouse_name", "warehouse_type", "address", "province", "status"]
+    df_dim_wh = df_dim_wh[cols]
+
+    with dw_eng.begin() as conn:
+        conn.execute(text("TRUNCATE TABLE dw.dim_warehouse RESTART IDENTITY CASCADE"))
+    df_dim_wh.to_sql("dim_warehouse", dw_eng, schema=DW_SCHEMA, if_exists="append", index=False)
+    return len(df_dim_wh)
+
+
+def load_dim_product(dw_eng: Engine) -> int:
+    df_prod = pd.read_sql("SELECT product_id, product_name, brand, category_id, unit, status FROM staging.stg_products", dw_eng)
+    df_cat = pd.read_sql("SELECT category_id, category_name FROM staging.stg_categories", dw_eng)
+
+    df_dim_prod = df_prod.merge(df_cat, on="category_id", how="left")
+    df_dim_prod["category_name"] = df_dim_prod["category_name"].fillna("Chưa phân loại")
+    df_dim_prod = df_dim_prod.dropna(subset=["product_id"]).drop_duplicates(subset=["product_id"])
+
+    cols = ["product_id", "product_name", "brand", "category_id", "category_name", "unit", "status"]
+    df_dim_prod = df_dim_prod[cols]
+
+    with dw_eng.begin() as conn:
+        conn.execute(text("TRUNCATE TABLE dw.dim_product RESTART IDENTITY CASCADE"))
+    df_dim_prod.to_sql("dim_product", dw_eng, schema=DW_SCHEMA, if_exists="append", index=False)
+    return len(df_dim_prod)
+
+
+def load_dim_customer(dw_eng: Engine) -> int:
+    df_cust = pd.read_sql("SELECT customer_id, full_name, gender, date_of_birth, member_tier, join_date, registration_channel, status FROM staging.stg_customers", dw_eng)
+
+    df_dim_cust = df_cust.dropna(subset=["customer_id"]).drop_duplicates(subset=["customer_id"]).copy()
+    df_dim_cust = df_dim_cust.rename(columns={"full_name": "customer_name", "member_tier": "member_level", "join_date": "registration_date"})
+    df_dim_cust["member_level"] = df_dim_cust["member_level"].fillna("WIN Standard")
+
+    cols = ["customer_id", "customer_name", "gender", "date_of_birth", "member_level", "registration_date", "registration_channel", "status"]
+    df_dim_cust = df_dim_cust[cols]
+
+    with dw_eng.begin() as conn:
+        conn.execute(text("TRUNCATE TABLE dw.dim_customer RESTART IDENTITY CASCADE"))
+    df_dim_cust.to_sql("dim_customer", dw_eng, schema=DW_SCHEMA, if_exists="append", index=False)
+    return len(df_dim_cust)
+
+
+def load_dim_promotion(dw_eng: Engine) -> int:
+    df_promo = pd.read_sql("SELECT promotion_id, promotion_name, promotion_type, start_datetime, end_datetime, status FROM staging.stg_promotions", dw_eng)
+
+    df_dim_promo = df_promo.dropna(subset=["promotion_id"]).drop_duplicates(subset=["promotion_id"]).copy()
+    df_dim_promo["start_date"] = pd.to_datetime(df_dim_promo["start_datetime"]).dt.date
+    df_dim_promo["end_date"] = pd.to_datetime(df_dim_promo["end_datetime"]).dt.date
+    df_dim_promo = df_dim_promo.rename(columns={"status": "promotion_status"})
+
+    cols = ["promotion_id", "promotion_name", "promotion_type", "start_date", "end_date", "promotion_status"]
+    df_dim_promo = df_dim_promo[cols]
+
+    with dw_eng.begin() as conn:
+        conn.execute(text("TRUNCATE TABLE dw.dim_promotion RESTART IDENTITY CASCADE"))
+    df_dim_promo.to_sql("dim_promotion", dw_eng, schema=DW_SCHEMA, if_exists="append", index=False)
+    return len(df_dim_promo)
+
+
+def load_dim_supplier(dw_eng: Engine) -> int:
+    df_supp = pd.read_sql("SELECT supplier_id, supplier_name, phone, email, address, status FROM staging.stg_suppliers", dw_eng)
+
+    df_dim_supp = df_supp.dropna(subset=["supplier_id"]).drop_duplicates(subset=["supplier_id"]).copy()
+    df_dim_supp["contact_name"] = None
+
+    cols = ["supplier_id", "supplier_name", "contact_name", "phone", "email", "address", "status"]
+    df_dim_supp = df_dim_supp[cols]
+
+    with dw_eng.begin() as conn:
+        conn.execute(text("TRUNCATE TABLE dw.dim_supplier RESTART IDENTITY CASCADE"))
+    df_dim_supp.to_sql("dim_supplier", dw_eng, schema=DW_SCHEMA, if_exists="append", index=False)
+    return len(df_dim_supp)
+
+
+def load_dim_batch(dw_eng: Engine) -> int:
+    df_gri = pd.read_sql("SELECT batch_no, product_id, expiry_date FROM staging.stg_goods_receipt_items", dw_eng)
+    df_prod = pd.read_sql("SELECT product_id, shelf_life_days FROM staging.stg_products", dw_eng)
+
+    df_batch = df_gri.dropna(subset=["batch_no", "product_id"]).merge(df_prod, on="product_id", how="left")
+    df_batch = df_batch.sort_values(by="expiry_date", ascending=False).drop_duplicates(subset=["product_id", "batch_no"]).copy()
+
+    df_batch["expiry_date"] = pd.to_datetime(df_batch["expiry_date"])
+    df_batch["manufacture_date"] = df_batch.apply(
+        lambda r: (r["expiry_date"] - pd.to_timedelta(r["shelf_life_days"], unit="D")).date() 
+        if pd.notna(r["expiry_date"]) and pd.notna(r["shelf_life_days"]) and r["shelf_life_days"] > 0 
+        else None, axis=1
+    )
+
+    today = pd.Timestamp.now().normalize()
+    def calc_status(exp):
+        if pd.isna(exp):
+            return "UNKNOWN"
+        elif exp < today:
+            return "EXPIRED"
+        elif exp <= today + pd.Timedelta(days=30):
+            return "NEAR_EXPIRY"
+        return "VALID"
+
+    df_batch["expiry_status"] = df_batch["expiry_date"].apply(calc_status)
+    df_batch["expiry_date"] = df_batch["expiry_date"].dt.date
+
+    cols = ["batch_no", "product_id", "manufacture_date", "expiry_date", "shelf_life_days", "expiry_status"]
+    df_dim_batch = df_batch[cols]
+
+    with dw_eng.begin() as conn:
+        conn.execute(text("TRUNCATE TABLE dw.dim_batch RESTART IDENTITY CASCADE"))
+    df_dim_batch.to_sql("dim_batch", dw_eng, schema=DW_SCHEMA, if_exists="append", index=False)
+    return len(df_dim_batch)
+
+
 def transform_and_load_dimensions(dw_eng: Engine) -> dict[str, int]:
-    """
-    Thực hiện Transform từ staging schema và Load vào 9 bảng dw.dim_*
-    Tự động cấp phát Surrogate Key (Identity).
-    """
     print("\n" + "=" * 78)
-    print(">>> BƯỚC 3 & 4: TRANSFORM DỮ LIỆU VÀ NẠP VÀO 9 BẢNG [DW.DIM_*]")
+    print(">>> BƯỚC 3 & 4: TRANSFORM DỮ LIỆU BẰNG PANDAS VÀ NẠP VÀO 9 BẢNG [DW.DIM_*]")
     print("=" * 78)
 
     dim_counts = {}
 
-    with dw_eng.begin() as conn:
-        # 1. DIM_DATE
-        cnt_date = transform_and_load_dim_date(dw_eng)
-        dim_counts["dim_date"] = cnt_date
-        print(f" [Load] dw.dim_date      : {cnt_date:>5} ngày (2025 - 2030)")
+    cnt_date = load_dim_date(dw_eng)
+    dim_counts["dim_date"] = cnt_date
+    print(f" [Load] dw.dim_date      : {cnt_date:>5} ngày (2025 - 2030)")
 
-        # 2. DIM_TIME
-        cnt_time = transform_and_load_dim_time(dw_eng)
-        dim_counts["dim_time"] = cnt_time
-        print(f" [Load] dw.dim_time      : {cnt_time:>5} khung giờ (24h x 60 phút)")
+    cnt_time = load_dim_time(dw_eng)
+    dim_counts["dim_time"] = cnt_time
+    print(f" [Load] dw.dim_time      : {cnt_time:>5} khung giờ (24h x 60 phút)")
 
-        # 3. DIM_STORE: JOIN staging.stg_stores & staging.stg_regions
-        conn.execute(text("TRUNCATE TABLE dw.dim_store RESTART IDENTITY CASCADE"))
-        sql_store = """
-            INSERT INTO dw.dim_store (
-                store_id, store_name, store_type, region_id, region_name,
-                province, district, status
-            )
-            SELECT DISTINCT
-                s.store_id::VARCHAR,
-                s.store_name::VARCHAR,
-                s.store_type::VARCHAR,
-                s.region_id::VARCHAR,
-                COALESCE(r.region_name, 'Unknown')::VARCHAR,
-                s.province::VARCHAR,
-                s.district::VARCHAR,
-                s.status::VARCHAR
-            FROM staging.stg_stores s
-            LEFT JOIN staging.stg_regions r ON s.region_id = r.region_id
-            WHERE s.store_id IS NOT NULL;
-        """
-        conn.execute(text(sql_store))
-        cnt_store = conn.execute(text("SELECT COUNT(*) FROM dw.dim_store")).scalar()
-        dim_counts["dim_store"] = cnt_store
-        print(f" [Load] dw.dim_store     : {cnt_store:>5} điểm bán")
+    cnt_store = load_dim_store(dw_eng)
+    dim_counts["dim_store"] = cnt_store
+    print(f" [Load] dw.dim_store     : {cnt_store:>5} điểm bán")
 
-        # 4. DIM_WAREHOUSE: Từ staging.stg_warehouses
-        conn.execute(text("TRUNCATE TABLE dw.dim_warehouse RESTART IDENTITY CASCADE"))
-        sql_wh = """
-            INSERT INTO dw.dim_warehouse (
-                warehouse_id, warehouse_name, warehouse_type, address, province, status
-            )
-            SELECT DISTINCT
-                w.warehouse_id::VARCHAR,
-                w.warehouse_name::VARCHAR,
-                COALESCE(w.region, 'Kho tổng')::VARCHAR AS warehouse_type,
-                w.address::VARCHAR,
-                w.province::VARCHAR,
-                w.status::VARCHAR
-            FROM staging.stg_warehouses w
-            WHERE w.warehouse_id IS NOT NULL;
-        """
-        conn.execute(text(sql_wh))
-        cnt_wh = conn.execute(text("SELECT COUNT(*) FROM dw.dim_warehouse")).scalar()
-        dim_counts["dim_warehouse"] = cnt_wh
-        print(f" [Load] dw.dim_warehouse : {cnt_wh:>5} tổng kho")
+    cnt_wh = load_dim_warehouse(dw_eng)
+    dim_counts["dim_warehouse"] = cnt_wh
+    print(f" [Load] dw.dim_warehouse : {cnt_wh:>5} tổng kho")
 
-        # 5. DIM_PRODUCT: JOIN staging.stg_products & staging.stg_categories
-        conn.execute(text("TRUNCATE TABLE dw.dim_product RESTART IDENTITY CASCADE"))
-        sql_prod = """
-            INSERT INTO dw.dim_product (
-                product_id, product_name, brand, category_id, category_name, unit, status
-            )
-            SELECT DISTINCT
-                p.product_id::VARCHAR,
-                p.product_name::VARCHAR,
-                p.brand::VARCHAR,
-                p.category_id::VARCHAR,
-                COALESCE(c.category_name, 'Chưa phân loại')::VARCHAR,
-                p.unit::VARCHAR,
-                p.status::VARCHAR
-            FROM staging.stg_products p
-            LEFT JOIN staging.stg_categories c ON p.category_id = c.category_id
-            WHERE p.product_id IS NOT NULL;
-        """
-        conn.execute(text(sql_prod))
-        cnt_prod = conn.execute(text("SELECT COUNT(*) FROM dw.dim_product")).scalar()
-        dim_counts["dim_product"] = cnt_prod
-        print(f" [Load] dw.dim_product   : {cnt_prod:>5} sản phẩm / SKU")
+    cnt_prod = load_dim_product(dw_eng)
+    dim_counts["dim_product"] = cnt_prod
+    print(f" [Load] dw.dim_product   : {cnt_prod:>5} sản phẩm / SKU")
 
-        # 6. DIM_CUSTOMER: Từ staging.stg_customers
-        conn.execute(text("TRUNCATE TABLE dw.dim_customer RESTART IDENTITY CASCADE"))
-        sql_cust = """
-            INSERT INTO dw.dim_customer (
-                customer_id, customer_name, gender, date_of_birth,
-                member_level, registration_date, registration_channel, status
-            )
-            SELECT DISTINCT
-                c.customer_id::VARCHAR,
-                c.full_name::VARCHAR AS customer_name,
-                c.gender::VARCHAR,
-                c.date_of_birth::DATE,
-                COALESCE(c.member_tier, 'WIN Standard')::VARCHAR AS member_level,
-                c.join_date::DATE AS registration_date,
-                c.registration_channel::VARCHAR,
-                c.status::VARCHAR
-            FROM staging.stg_customers c
-            WHERE c.customer_id IS NOT NULL;
-        """
-        conn.execute(text(sql_cust))
-        cnt_cust = conn.execute(text("SELECT COUNT(*) FROM dw.dim_customer")).scalar()
-        dim_counts["dim_customer"] = cnt_cust
-        print(f" [Load] dw.dim_customer  : {cnt_cust:>5} khách hàng hội viên")
+    cnt_cust = load_dim_customer(dw_eng)
+    dim_counts["dim_customer"] = cnt_cust
+    print(f" [Load] dw.dim_customer  : {cnt_cust:>5} khách hàng hội viên")
 
-        # 7. DIM_PROMOTION: Từ staging.stg_promotions
-        conn.execute(text("TRUNCATE TABLE dw.dim_promotion RESTART IDENTITY CASCADE"))
-        sql_promo = """
-            INSERT INTO dw.dim_promotion (
-                promotion_id, promotion_name, promotion_type, start_date, end_date, promotion_status
-            )
-            SELECT DISTINCT
-                pr.promotion_id::VARCHAR,
-                pr.promotion_name::VARCHAR,
-                pr.promotion_type::VARCHAR,
-                pr.start_datetime::DATE AS start_date,
-                pr.end_datetime::DATE AS end_date,
-                pr.status::VARCHAR AS promotion_status
-            FROM staging.stg_promotions pr
-            WHERE pr.promotion_id IS NOT NULL;
-        """
-        conn.execute(text(sql_promo))
-        cnt_promo = conn.execute(text("SELECT COUNT(*) FROM dw.dim_promotion")).scalar()
-        dim_counts["dim_promotion"] = cnt_promo
-        print(f" [Load] dw.dim_promotion : {cnt_promo:>5} chương trình khuyến mãi")
+    cnt_promo = load_dim_promotion(dw_eng)
+    dim_counts["dim_promotion"] = cnt_promo
+    print(f" [Load] dw.dim_promotion : {cnt_promo:>5} chương trình khuyến mãi")
 
-        # 8. DIM_SUPPLIER: Từ staging.stg_suppliers
-        conn.execute(text("TRUNCATE TABLE dw.dim_supplier RESTART IDENTITY CASCADE"))
-        sql_supp = """
-            INSERT INTO dw.dim_supplier (
-                supplier_id, supplier_name, contact_name, phone, email, address, status
-            )
-            SELECT DISTINCT
-                s.supplier_id::VARCHAR,
-                s.supplier_name::VARCHAR,
-                NULL::VARCHAR AS contact_name,
-                s.phone::VARCHAR,
-                s.email::VARCHAR,
-                s.address::VARCHAR,
-                s.status::VARCHAR
-            FROM staging.stg_suppliers s
-            WHERE s.supplier_id IS NOT NULL;
-        """
-        conn.execute(text(sql_supp))
-        cnt_supp = conn.execute(text("SELECT COUNT(*) FROM dw.dim_supplier")).scalar()
-        dim_counts["dim_supplier"] = cnt_supp
-        print(f" [Load] dw.dim_supplier  : {cnt_supp:>5} nhà cung cấp chuỗi cung ứng")
+    cnt_supp = load_dim_supplier(dw_eng)
+    dim_counts["dim_supplier"] = cnt_supp
+    print(f" [Load] dw.dim_supplier  : {cnt_supp:>5} nhà cung cấp chuỗi cung ứng")
 
-        # 9. DIM_BATCH: Từ staging.stg_goods_receipt_items kết hợp staging.stg_products
-        conn.execute(text("TRUNCATE TABLE dw.dim_batch RESTART IDENTITY CASCADE"))
-        sql_batch = """
-            WITH batch_cleaned AS (
-                SELECT
-                    gri.batch_no::VARCHAR,
-                    gri.product_id::VARCHAR,
-                    gri.expiry_date::DATE,
-                    p.shelf_life_days::INTEGER,
-                    ROW_NUMBER() OVER (
-                        PARTITION BY gri.product_id, gri.batch_no
-                        ORDER BY gri.expiry_date DESC NULLS LAST
-                    ) AS rn
-                FROM staging.stg_goods_receipt_items gri
-                LEFT JOIN staging.stg_products p ON gri.product_id = p.product_id
-                WHERE gri.batch_no IS NOT NULL AND gri.product_id IS NOT NULL
-            )
-            INSERT INTO dw.dim_batch (
-                batch_no, product_id, manufacture_date, expiry_date,
-                shelf_life_days, expiry_status
-            )
-            SELECT
-                batch_no,
-                product_id,
-                CASE
-                    WHEN expiry_date IS NOT NULL AND shelf_life_days IS NOT NULL AND shelf_life_days > 0
-                    THEN (expiry_date - (shelf_life_days || ' days')::INTERVAL)::DATE
-                    ELSE NULL
-                END AS manufacture_date,
-                expiry_date,
-                shelf_life_days,
-                CASE
-                    WHEN expiry_date IS NULL THEN 'UNKNOWN'
-                    WHEN expiry_date < CURRENT_DATE THEN 'EXPIRED'
-                    WHEN expiry_date <= CURRENT_DATE + INTERVAL '30 days' THEN 'NEAR_EXPIRY'
-                    ELSE 'VALID'
-                END AS expiry_status
-            FROM batch_cleaned
-            WHERE rn = 1;
-        """
-        conn.execute(text(sql_batch))
-        cnt_batch = conn.execute(text("SELECT COUNT(*) FROM dw.dim_batch")).scalar()
-        dim_counts["dim_batch"] = cnt_batch
-        print(f" [Load] dw.dim_batch     : {cnt_batch:>5} lô hàng nhập kho")
+    cnt_batch = load_dim_batch(dw_eng)
+    dim_counts["dim_batch"] = cnt_batch
+    print(f" [Load] dw.dim_batch     : {cnt_batch:>5} lô hàng nhập kho")
 
     return dim_counts
 
 
-# =============================================================================
-# 5. BƯỚC 5: ĐỐI SOÁT & KIỂM TRA CHẤT LƯỢNG (VALIDATION)
-# =============================================================================
 def validate_dw_dimensions(dw_eng: Engine) -> None:
-    """Kiểm tra số lượng bản ghi và tính duy nhất của Surrogate Key & Natural Key."""
     print("\n" + "=" * 78)
     print(">>> BƯỚC 5: KIỂM TRA CHẤT LƯỢNG & ĐỐI SOÁT DỮ LIỆU DATA WAREHOUSE")
     print("=" * 78)
@@ -613,8 +531,6 @@ def validate_dw_dimensions(dw_eng: Engine) -> None:
     with dw_eng.connect() as conn:
         for tbl, sk, nk in tables_to_check:
             cnt = conn.execute(text(f"SELECT COUNT(*) FROM {tbl}")).scalar()
-            
-            # Check SK trùng
             sk_dup = conn.execute(
                 text(f"SELECT COUNT(*) FROM (SELECT {sk} FROM {tbl} GROUP BY {sk} HAVING COUNT(*) > 1) t")
             ).scalar()
@@ -625,21 +541,15 @@ def validate_dw_dimensions(dw_eng: Engine) -> None:
     print("=" * 78)
 
 
-# =============================================================================
-# 6. HÀM ĐIỀU PHỐI TOÀN BỘ PIPELINE
-# =============================================================================
 def run_etl() -> None:
-    """Hàm chạy toàn bộ quy trình ETL nạp 9 bảng Dimension."""
     print("*" * 78)
     print("  KHỞI ĐỘNG TIẾN TRÌNH ETL CÂU 10: NẠP 9 BẢNG DIMENSION (WINCOMMERCE DW)")
     print("*" * 78)
 
-    # 1. Đảm bảo CSDL wincommerce_dw và schema tồn tại
     ensure_dw_database()
     dw_eng = get_postgres_engine(DW_DATABASE)
     create_dw_schemas_and_tables(dw_eng)
 
-    # 2. Khởi tạo nhật ký ETL
     run_id = None
     with dw_eng.begin() as conn:
         run_id = conn.execute(
@@ -653,20 +563,13 @@ def run_etl() -> None:
         ).scalar()
 
     try:
-        # 3. Kết nối nguồn
         sql_eng = get_sql_server_engine(SQL_SERVER_DATABASE)
         pg_src_eng = get_postgres_engine(SOURCE_PG_DATABASE)
 
-        # 4. Trích xuất và nạp Staging
         stg_counts = extract_and_load_staging(sql_eng, pg_src_eng, dw_eng)
-
-        # 5. Chuyển đổi và nạp vào 9 bảng DIM
         dim_counts = transform_and_load_dimensions(dw_eng)
-
-        # 6. Kiểm tra & xác nhận
         validate_dw_dimensions(dw_eng)
 
-        # 7. Cập nhật nhật ký ETL thành công
         all_metrics = {"staging_counts": stg_counts, "dimension_counts": dim_counts}
         with dw_eng.begin() as conn:
             conn.execute(
