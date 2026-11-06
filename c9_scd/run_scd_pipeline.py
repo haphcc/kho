@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 =============================================================================
-CHƯƠNG TRÌNH ĐIỀU PHỐI CHÍNH: WINCOMMERCE DWH SCD TYPE 1 & TYPE 2 PIPELINE
+CÂU 9: CHƯƠNG TRÌNH ĐIỀU PHỐI CHÍNH: WINCOMMERCE DWH SCD TYPE 1 & TYPE 2 PIPELINE
 HIỆN THỰC HÓA ĐẦY ĐỦ 4 KỊCH BẢN THEO TÀI LIỆU THIẾT KẾ KHO DỮ LIỆU
 =============================================================================
 4 Kịch bản nghiệp vụ:
@@ -29,7 +29,7 @@ from scd_type1 import run_scd1_benchmark
 
 def main():
     print("=" * 88)
-    print("      HỆ THỐNG ĐIỀU PHỐI KHO DỮ LIỆU WINCOMMERCE: SCD TYPE 1 & SCD TYPE 2")
+    print("      [CÂU 9] HỆ THỐNG ĐIỀU PHỐI KHO DỮ LIỆU WINCOMMERCE: SCD TYPE 1 & SCD TYPE 2")
     print("      ĐÁP ỨNG ĐẦY ĐỦ 4 KỊCH BẢN NGHIỆP VỤ THEO BÁO CÁO THIẾT KẾ")
     print("=" * 88)
     

@@ -1,4 +1,6 @@
-# Hướng Dẫn & Báo Cáo Triển Khai SCD Type 2 & Type 1 Cho WinCommerce
+# README – HƯỚNG DẪN & BÁO CÁO TRIỂN KHAI SCD TYPE 2 & TYPE 1 CHO WINCOMMERCE
+**Phạm vi: Câu 9 – Triển khai Slowly Changing Dimensions (SCD Type 1 & SCD Type 2)**
+
 ## Dựa trên Báo cáo Thiết kế Kho Dữ Liệu WinCommerce
 
 Hệ thống kho dữ liệu triển khai đầy đủ **4 Kịch bản nghiệp vụ SCD Type 2** theo đúng tài liệu thiết kế của WinCommerce:

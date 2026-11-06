@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 =============================================================================
-KHO DỮ LIỆU WINCOMMERCE: SCD TYPE 1 (GHI ĐÈ TRỰC TIẾP - IN-PLACE OVERWRITE)
+CÂU 9 - KHO DỮ LIỆU WINCOMMERCE: SCD TYPE 1 (GHI ĐÈ TRỰC TIẾP - IN-PLACE OVERWRITE)
 TRIỂN KHAI VÀ PHÂN LOẠI CHO 4 KỊCH BẢN THEO TÀI LIỆU THIẾT KẾ
 =============================================================================
 Nguyên lý SCD Type 1:

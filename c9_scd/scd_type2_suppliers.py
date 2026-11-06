@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 =============================================================================
-KHO DỮ LIỆU WINCOMMERCE: SCD TYPE 2 - KỊCH BẢN 4: DIM_SUPPLIER
+CÂU 9 - KHO DỮ LIỆU WINCOMMERCE: SCD TYPE 2 - KỊCH BẢN 4: DIM_SUPPLIER
 ĐIỀU CHỈNH CAM KẾT GIAO HÀNG (LEAD TIME) & ĐÁNH GIÁ NHÀ CUNG CẤP CHUỖI CUNG ỨNG
 =============================================================================
 Bối cảnh thực tế tại WinCommerce (Phân hệ Chuỗi cung ứng - PostgreSQL / DuckDB):

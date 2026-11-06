@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 =============================================================================
-HỆ THỐNG KHO DỮ LIỆU WINCOMMERCE: SLOWLY CHANGING DIMENSION TYPE 2 (SCD TYPE 2)
+CÂU 9 - HỆ THỐNG KHO DỮ LIỆU WINCOMMERCE: SLOWLY CHANGING DIMENSION TYPE 2 (SCD TYPE 2)
 HIỆN THỰC HÓA ĐẦY ĐỦ 4 KỊCH BẢN NGHIỆP VỤ THEO BÁO CÁO THIẾT KẾ
 =============================================================================
 4 Kịch bản nghiệp vụ theo thiết kế:

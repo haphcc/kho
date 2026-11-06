@@ -1,5 +1,5 @@
 # README – HƯỚNG DẪN TRIỂN KHAI ETL DATA WAREHOUSE WINCOMMERCE
-**Phạm vi: Câu 9 – Nạp dữ liệu vào các bảng Dimension (DIM) và Câu 10 – Nạp dữ liệu vào các bảng Fact (FACT)**
+**Phạm vi: Câu 10 – Nạp dữ liệu vào các bảng Dimension (DIM) và Câu 11 – Nạp dữ liệu vào các bảng Fact (FACT)**
 
 ---
 
@@ -7,7 +7,7 @@
 
 Tài liệu này thống nhất cách triển khai quá trình ETL (Extract – Transform – Load) để đưa dữ liệu từ hai hệ thống cơ sở dữ liệu nghiệp vụ OLTP vào Data Warehouse của WinCommerce.
 
-Các thành viên thực hiện Câu 9 và Câu 10 cần tuân thủ chung kiến trúc, cách tổ chức database, quy tắc đặt tên bảng và phương pháp kiểm tra dữ liệu nhằm đảm bảo các bảng DIM và FACT có thể liên kết với nhau chính xác.
+Các thành viên thực hiện Câu 10 và Câu 11 cần tuân thủ chung kiến trúc, cách tổ chức database, quy tắc đặt tên bảng và phương pháp kiểm tra dữ liệu nhằm đảm bảo các bảng DIM và FACT có thể liên kết với nhau chính xác.
 
 **Nguyên tắc quan trọng:**
 - Không thay đổi hoặc ghi đè dữ liệu trong hai database nguồn.
@@ -117,7 +117,7 @@ Có thể tạo các bảng:
 
 Schema này phục vụ quản lý và kiểm tra, không phải nơi lưu dữ liệu phân tích.
 
-## 4. Câu 9 – ETL dữ liệu vào 9 bảng DIM
+## 4. Câu 10 – ETL dữ liệu vào 9 bảng DIM
 
 ### 4.1. Nguồn dữ liệu của các bảng DIM
 
@@ -223,9 +223,9 @@ Nhóm cần thống nhất quy tắc ánh xạ mã sản phẩm giữa:
 
 Mục tiêu là một sản phẩm chỉ có một định danh thống nhất trong Data Warehouse, tránh tạo hai bản ghi DIM_PRODUCT cho cùng một sản phẩm do khác mã hoặc cách biểu diễn giữa các nguồn.
 
-## 5. Câu 10 – ETL dữ liệu vào các bảng FACT
+## 5. Câu 11 – ETL dữ liệu vào các bảng FACT
 
-Câu 10 tiếp tục sử dụng kiến trúc ETL đã triển khai ở Câu 9, nhưng đối tượng nạp dữ liệu là các bảng Fact.
+Câu 11 tiếp tục sử dụng kiến trúc ETL đã triển khai ở Câu 10, nhưng đối tượng nạp dữ liệu là các bảng Fact.
 
 ### 5.1. Mục tiêu
 
@@ -375,8 +375,8 @@ WinCommerce-DWH/
 │   └── main.py
 │
 ├── screenshots/
-│   ├── câu9/
-│   └── câu10/
+│   ├── câu10/
+│   └── câu11/
 │
 └── requirements.txt
 ```
@@ -439,11 +439,11 @@ Các câu lệnh tương tự cần được thực hiện đối với những 
 
 ## 8. Hình ảnh minh chứng cần chuẩn bị cho báo cáo
 
-Yêu cầu của Câu 9 và Câu 10 không chỉ là viết mô tả ETL mà còn cần minh họa việc nạp dữ liệu thành công.
+Yêu cầu của Câu 10 và Câu 11 không chỉ là viết mô tả ETL mà còn cần minh họa việc nạp dữ liệu thành công.
 
 Mỗi thành viên phụ trách cần chụp ảnh kết quả thực tế, không sử dụng dữ liệu hoặc ảnh minh họa giả lập.
 
-### Câu 9 – DIM
+### Câu 10 – DIM
 
 Các ảnh cần có:
 1. Kết nối Python thành công đến SQL Server và PostgreSQL.
@@ -452,7 +452,7 @@ Các ảnh cần có:
 4. Kết quả truy vấn `SELECT *` trên các bảng DIM.
 5. Kết quả thống kê số lượng bản ghi của 9 DIM.
 
-### Câu 10 – FACT
+### Câu 11 – FACT
 
 Các ảnh cần có:
 1. Kết quả trích xuất dữ liệu giao dịch từ nguồn.
@@ -481,11 +481,11 @@ Các ảnh cần có:
 | 1 | Tạo database `wincommerce_dw` và ba schema | Thành viên phụ trách database |
 | 2 | Kiểm tra kết nối SQL Server và PostgreSQL | Thành viên phụ trách kết nối |
 | 3 | Tạo các bảng DIM và FACT theo thiết kế | Thành viên phụ trách cấu trúc DW |
-| 4 | Viết ETL và nạp 9 bảng DIM | Nhóm Câu 9 |
-| 5 | Kiểm tra DIM và Surrogate Key | Nhóm Câu 9 |
-| 6 | Viết ETL và nạp các bảng FACT | Nhóm Câu 10 |
-| 7 | Kiểm tra khóa ngoại và số liệu FACT | Nhóm Câu 10 |
+| 4 | Viết ETL và nạp 9 bảng DIM | Nhóm Câu 10 |
+| 5 | Kiểm tra DIM và Surrogate Key | Nhóm Câu 10 |
+| 6 | Viết ETL và nạp các bảng FACT | Nhóm Câu 11 |
+| 7 | Kiểm tra khóa ngoại và số liệu FACT | Nhóm Câu 11 |
 | 8 | Chạy thử toàn bộ quy trình và chụp ảnh minh chứng | Cả nhóm |
-| 9 | Hoàn thiện nội dung báo cáo Câu 9 và Câu 10 | Cả nhóm |
+| 9 | Hoàn thiện nội dung báo cáo Câu 10 và Câu 11 | Cả nhóm |
 
 ---
