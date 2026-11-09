@@ -1,87 +1,88 @@
-# README – HƯỚNG DẪN & BÁO CÁO TRIỂN KHAI SCD TYPE 2 & TYPE 1 CHO WINCOMMERCE
-**Phạm vi: Câu 9 – Triển khai Slowly Changing Dimensions (SCD Type 1 & SCD Type 2)**
+# Hướng dẫn chạy SCD Type 2 cho DIM_STORE và DIM_CUSTOMER
 
-## Dựa trên Báo cáo Thiết kế Kho Dữ Liệu WinCommerce
+`run_scd_type2_cases.py` minh họa SCD Type 2 trên PostgreSQL Data Warehouse `wincommerce_dw`, schema `dw`. Script chỉ tác động hai business key trong DW:
 
-Hệ thống kho dữ liệu triển khai đầy đủ **4 Kịch bản nghiệp vụ SCD Type 2** theo đúng tài liệu thiết kế của WinCommerce:
-1. **DIM_STORE**: Chuyển đổi mô hình điểm bán từ WinMart+ sang "Mini-mall" WiN & Tái cơ cấu vùng quản lý (Hà Nội - Nội thành sang Hà Nội - Khu vực Tây).
-2. **DIM_CUSTOMER**: Chu kỳ Thăng hạng – Hạ hạng Hội viên WIN (`WIN Silver` -> `WIN VIP` -> `WIN Gold`).
-3. **DIM_PRODUCT**: Tái phân loại Ngành hàng & Nhãn hàng riêng Masan (Thịt heo mát MEATLife từ `Thực phẩm tươi sống` sang `Thực phẩm Công nghệ Mát (Chilled Food)`).
-4. **DIM_SUPPLIER**: Điều chỉnh Cam kết Giao hàng (`lead_time_days` từ 3 ngày rút xuống 1 ngày) & Di dời kho trung tâm.
+- `dw.dim_store.store_id = '1'`, tương ứng bản ghi nguồn `stores.store_id = 1`, `store_code = 'ST-0001'`.
+- `dw.dim_customer.customer_id = '101'`, tương ứng khách hàng Võ Thanh Anh.
 
----
+Script không cập nhật hai hệ thống nguồn. Các thay đổi sau bản ghi baseline là snapshot mô phỏng tại tầng ETL/DW để kiểm chứng việc lưu vết lịch sử.
 
-## 1. Thiết Kế Chuẩn 5 Cột Metadata Quản Lý Lịch Sử
+## Điều kiện chuẩn bị
 
-Theo đúng chuẩn kiến trúc Kimball cho Google BigQuery / DuckDB:
+Hai DIM phải có năm metadata SCD: `effective_from`, `effective_to`, `is_current`, `version_num`, và `row_hash`. Đồng thời, không được giữ unique constraint đơn trên `store_id` hoặc `customer_id`, vì một business key có nhiều phiên bản.
 
-| Tên Cột | Kiểu Dữ Liệu | Ý Nghĩa Trong Kho Dữ Liệu WinCommerce |
-| :--- | :--- | :--- |
-| **`effective_from`** | TIMESTAMP | Thời điểm phiên bản bắt đầu có hiệu lực. |
-| **`effective_to`** | TIMESTAMP | Thời điểm phiên bản hết hiệu lực (`2099-12-31 23:59:59` cho dòng active). |
-| **`is_current`** | BOOLEAN | Cờ trạng thái hiện hành (`TRUE` = Đang hiệu lực, `FALSE` = Lịch sử cũ). |
-| **`version_num`** | INTEGER | Số thứ tự phiên bản biến đổi (`1, 2, 3...`). |
-| **`row_hash`** | VARCHAR | Mã băm MD5 tổ hợp các cột SCD Type 2 giúp phát hiện biến động tức thì. |
+```sql
+ALTER TABLE dw.dim_store
+    DROP CONSTRAINT IF EXISTS dim_store_store_id_key,
+    ADD COLUMN IF NOT EXISTS effective_from TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    ADD COLUMN IF NOT EXISTS effective_to TIMESTAMP NOT NULL DEFAULT TIMESTAMP '2099-12-31 23:59:59',
+    ADD COLUMN IF NOT EXISTS is_current BOOLEAN NOT NULL DEFAULT TRUE,
+    ADD COLUMN IF NOT EXISTS version_num INT NOT NULL DEFAULT 1,
+    ADD COLUMN IF NOT EXISTS row_hash CHAR(32);
 
----
+ALTER TABLE dw.dim_store
+    ADD CONSTRAINT uq_dim_store_version UNIQUE (store_id, version_num);
 
-## 2. Cấu Trúc Mã Nguồn
+CREATE UNIQUE INDEX IF NOT EXISTS uq_dim_store_current
+    ON dw.dim_store (store_id) WHERE is_current = TRUE;
 
-| Tập tin | Vai trò & Kịch bản thực thi |
-| :--- | :--- |
-| **`scd_type2.py`** | **[CHÍNH]** Triển khai toàn diện **4 Kịch bản SCD Type 2** qua 4 mốc thời gian trong năm 2026, hàm tổng quát `etl_scd2_generic()`, tích hợp `FACT_SALES_TRANSACTION`, phép toán Roll-up (Câu 4.2), Drill-down theo thời gian, Time-travel Query và xuất Parquet. |
-| **`scd_type2_suppliers.py`** | **[CHUYÊN SÂU]** Kịch bản 4: `DIM_SUPPLIER` & `FACT_PURCHASE_ORDER`. Kiểm toán tỷ lệ giao hàng đúng hạn (Câu 4.11 & Câu 3.2), chứng minh tại sao SCD 1 làm sai lệch KPI hợp đồng. |
-| **`scd_type1.py`** | Triển khai **SCD Type 1 (Ghi đè in-place)** cho các thuộc tính không lưu lịch sử (đính chính tên cửa hàng, quy cách bao bì `unit`, SĐT/email nhà cung cấp) và Benchmark 3 engine (Pandas vs SQLAlchemy vs DuckDB). |
-| **`run_scd_pipeline.py`** | Menu dòng lệnh điều phối và chạy thử nghiệm tương tác toàn bộ hệ thống. |
-| **`db_connect.py`** | Kết nối đa CSDL: SQL Server (`multichannel_sales`), DuckDB (`dwh_analytics.duckdb`) và cơ chế fallback an toàn. |
+ALTER TABLE dw.dim_customer
+    DROP CONSTRAINT IF EXISTS dim_customer_customer_id_key,
+    ADD COLUMN IF NOT EXISTS effective_from TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    ADD COLUMN IF NOT EXISTS effective_to TIMESTAMP NOT NULL DEFAULT TIMESTAMP '2099-12-31 23:59:59',
+    ADD COLUMN IF NOT EXISTS is_current BOOLEAN NOT NULL DEFAULT TRUE,
+    ADD COLUMN IF NOT EXISTS version_num INT NOT NULL DEFAULT 1,
+    ADD COLUMN IF NOT EXISTS row_hash CHAR(32);
 
----
+ALTER TABLE dw.dim_customer
+    ADD CONSTRAINT uq_dim_customer_version UNIQUE (customer_id, version_num);
 
-## 3. Cách Chạy Thử Nghiệm
-
-Mở Terminal / PowerShell tại thư mục dự án và chạy:
-
-### Chạy trực tiếp SCD Type 2 (4 kịch bản + Roll-up/Drill-down):
-```bash
-python scd_type2.py
+CREATE UNIQUE INDEX IF NOT EXISTS uq_dim_customer_current
+    ON dw.dim_customer (customer_id) WHERE is_current = TRUE;
 ```
 
-### Chạy kiểm toán Nhà cung cấp & Chuỗi cung ứng (Kịch bản 4):
-```bash
-python scd_type2_suppliers.py
+Chỉ chạy phần `ADD CONSTRAINT` một lần. Nếu constraint/index đã tồn tại, PostgreSQL sẽ báo lỗi; khi đó bỏ qua riêng hai lệnh đó.
+
+## Cấu hình và chạy
+
+Script dùng `SQLAlchemy` với driver PostgreSQL `psycopg2`. Thiết lập biến môi trường theo database đích của nhóm:
+
+```powershell
+$env:PG_HOST = "127.0.0.1"
+$env:PG_PORT = "5432"
+$env:PG_USER = "postgres"
+$env:PG_PASSWORD = "1"
+$env:DW_DATABASE = "wincommerce_dw"
+
+python c9_scd/run_scd_type2_cases.py
 ```
 
-### Chạy thử nghiệm & Benchmark SCD Type 1:
-```bash
-python scd_type1.py
+Nếu hai DIM đã chứa lịch sử của chính hai business key này và cần dựng lại đúng ba phiên bản để chụp báo cáo, chạy:
+
+```powershell
+python c9_scd/run_scd_type2_cases.py --reset-demo
 ```
 
-### Chạy điều phối tổng hợp qua Menu dòng lệnh:
-```bash
-python run_scd_pipeline.py
-```
-*(Truyền trực tiếp tham số: `python run_scd_pipeline.py 4` để chạy toàn bộ từ A đến Z).*
+`--reset-demo` chỉ xóa các dòng có `store_id = '1'` trong `dim_store` và `customer_id = '101'` trong `dim_customer`; không tác động các DIM hay business key khác.
 
----
+## Kịch bản mô phỏng
 
-## 4. Bảng Kết Quả Thực Thi Điển Hình
+| Thời điểm | DIM_STORE - ST-0001 / store_id 1 | DIM_CUSTOMER - customer_id 101 |
+|---|---|---|
+| 01/01/2026 | `WINMART_PLUS`, vùng `91 - Khu vực Hải Dương 2` | `STANDARD` |
+| 01/05/2026 | Đổi mô hình sang `WIN` | Nâng hạng lên `PLATINUM` |
+| 01/11/2026 | Đổi vùng sang `28 - Khu vực Hải Dương` | Hạ hạng xuống `GOLD` |
 
-### Phép toán Roll-up (Câu 4.2): Doanh thu theo mô hình & khu vực
-```text
-Mô hình cửa hàng  Khu vực quản lý       Doanh thu
-             WiN   HN - Nội thành 120,000,000 VNĐ
-             WiN HN - Khu vực Tây 150,000,000 VNĐ
-        WinMart+   HN - Nội thành  50,000,000 VNĐ
-```
+Hash MD5 của cửa hàng dùng `store_type`, `region_id`, `region_name`, `status`; hash của khách hàng dùng `member_level`, `status`. Khi hash thay đổi, script đặt `effective_to` cho phiên bản hiện hành, gán `is_current = FALSE`, rồi chèn phiên bản mới.
 
-### Phép toán Drill-down: Chi tiết qua các giai đoạn
-```text
-    Thời gian      Tên điểm bán  Mô hình  Khu vực quản lý Hạng KH lúc mua                     Ngành hàng lúc bán       Doanh thu
-Tháng 02/2026 WinMart+ Cầu Giấy WinMart+   HN - Nội thành      WIN Silver                    Thực phẩm tươi sống  50,000,000 VNĐ
-Tháng 07/2026      WiN Cầu Giấy      WiN   HN - Nội thành         WIN VIP Thực phẩm Công nghệ Mát (Chilled Food) 120,000,000 VNĐ
-Tháng 12/2026      WiN Cầu Giấy      WiN HN - Khu vực Tây        WIN Gold Thực phẩm Công nghệ Mát (Chilled Food) 150,000,000 VNĐ
-```
+## Kết quả mong đợi
 
-### Minh chứng đối chứng SCD Type 2 vs SCD Type 1:
-- **Nếu dùng sai SCD Type 1** (ghi đè `store_type = 'WiN'`): Toàn bộ 50 triệu doanh thu lúc còn là WinMart+ sẽ bị cộng nhầm sang WiN (`WinMart+ = 0 VNĐ`, `WiN = 320,000,000 VNĐ`), làm sai lệch hoàn toàn báo cáo đánh giá tái cơ cấu của Ban Lãnh đạo!
-- **Chuẩn SCD Type 2** bảo toàn chính xác lịch sử hoạt động và gắn doanh thu đúng với phiên bản điểm bán tại thời điểm giao dịch.
+Mỗi DIM có ba phiên bản, với khoảng hiệu lực liên tiếp:
+
+| Version | effective_from | effective_to | is_current |
+|---|---|---|---|
+| 1 | 01/01/2026 | 01/05/2026 | `FALSE` |
+| 2 | 01/05/2026 | 01/11/2026 | `FALSE` |
+| 3 | 01/11/2026 | 31/12/2099 23:59:59 | `TRUE` |
+
+Script cũng in kết quả time-travel tại 15/02, 15/07 và 15/12/2026. Chạy lại không sinh thêm phiên bản nếu lịch sử đúng với kịch bản. Mọi thao tác của một lần chạy nằm trong một transaction; khi bất kỳ bước nào lỗi, PostgreSQL rollback toàn bộ lần chạy.
